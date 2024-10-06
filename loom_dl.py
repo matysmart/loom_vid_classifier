@@ -1,18 +1,17 @@
-### Instructions on how to generate the dataset
-### Add dataset to links.xlsx (0-bad, 1-good)
-### Edit the "offset" variable so as not to replace existing training dataset
-### Output will be in "bad" and "good" folders
-### Transfer these to train/val/test
-### Train colab notebook is in: loom_video_error_classifier_train.ipynb
-### Inference colab notebook is in: loom_video_error_classifier.ipynb (upload linksTestOnly.xlsx)
 import argparse
 import json
 import urllib.request
 from moviepy.video.io.VideoFileClip import VideoFileClip
 import os
 import pandas as pd
+import shutil
+import openpyxl
+from sklearn.model_selection import train_test_split
 
-offset = 118
+# Paths for train/val datasets
+base_path = "loom_dataset"
+train_path = os.path.join(base_path, "train")
+val_path = os.path.join(base_path, "val")
 
 def fetch_loom_download_url(id):
     request = urllib.request.Request(
@@ -69,44 +68,62 @@ def download_loom_video_to_file(url_str, trimmed_filename):
     download_loom_video(url, filename)
 
     # Trim the first second of the downloaded video
-    # trimmed_filename = f"{id}.avi"  # Final output filename
     print(f"Trimming video {filename} to {trimmed_filename}")
     trim_video(filename, trimmed_filename)
 
     # Example usage
     delete_file_if_exists(filename)
 
-# Function to remove the query part from the URL
-def remove_query_from_url(url):
-    return url.split('?')[0]
+# Function to create directories if they don't exist
+def create_directories(colors):
+    for color in colors:
+        os.makedirs(os.path.join(train_path, color), exist_ok=True)
+        os.makedirs(os.path.join(val_path, color), exist_ok=True)
 
 def main():
-    # Read the Excel file
-    df = pd.read_excel('links.xlsx')
-    df['video'] = df['video'].apply(remove_query_from_url)
+    # Load the Excel file
+    file_path = 'linksTestResultsGroundTruth3.xlsx'  # Replace with your Excel file path
+    wb = openpyxl.load_workbook(file_path)
+    sheet = wb.active  # Or wb['SheetName'] if you want to specify the sheet
 
-    # Create the directory structure if it doesn't exist
-    os.makedirs('loom_dataset/bad', exist_ok=True)
-    os.makedirs('loom_dataset/good', exist_ok=True)
-    
-    # Iterate over each row in the dataframe
-    for index, row in df.iterrows():
-        url = row['video']
-        label = row['label']
+    # Extract videos and their colors
+    videos_by_color = {'white': [], 'yellow': [], 'red': []}
+
+    for row in sheet.iter_rows(min_row=2):  # Assuming headers are in the first row
+        video_url = row[0].value  # Assuming video URLs are in the first column
+        color = row[0].fill.start_color.rgb
         
-        # Determine save directory based on the label
-        if label == 0:
-            save_dir = 'loom_dataset\\bad'
-            filename = f'video{index+1+offset}.avi'
-        elif label == 1:
-            save_dir = 'loom_dataset\\good'
-            filename = f'video{index+1+offset}.avi'
+        if color == '00000000':  # Transparent as white
+            videos_by_color['white'].append(video_url)
+        elif color == 'FFFFFF00':  # Yellow
+            videos_by_color['yellow'].append(video_url)
+        elif color == 'FFFF0000':  # Red
+            videos_by_color['red'].append(video_url)
+
+    # Ensure output directories exist
+    create_directories(videos_by_color.keys())
+
+    # Split videos by 80% train, 20% val
+    for color, videos in videos_by_color.items():
+        train_videos, val_videos = train_test_split(videos, test_size=0.2, random_state=42)
         
-        # Full path to save the video
-        save_path = os.path.join(save_dir, filename)
-        print(f"save_path: {save_path}")
-        # Call the download function
-        download_loom_video_to_file(url_str=url, trimmed_filename=save_path)
+        # Download and save videos in train/val directories
+        for idx, video_url in enumerate(train_videos):
+            try:
+                print("current url: ", video_url)
+                save_path = os.path.join(train_path, color, f"video{idx+1}.avi")
+                print("save_path: ", save_path)
+                # Call the download function
+                download_loom_video_to_file(url_str=video_url, trimmed_filename=save_path)
+            except: pass
+        
+        for idx, video_url in enumerate(val_videos):
+            try:
+                print("current url: ", video_url)
+                save_path = os.path.join(val_path, color, f"video{idx+1}.avi")
+                # Call the download function
+                download_loom_video_to_file(url_str=video_url, trimmed_filename=save_path)
+            except: pass
 
 if __name__ == "__main__":
     main()
